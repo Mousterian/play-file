@@ -5,3 +5,4 @@ authors = ["Mousterian <psandison@hotmail.com>"]
 
 [dependencies]
 coreaudio-sys = { git="https://github.com/Mousterian/coreaudio-sys", branch="playfile" }
+libc = "0.2.15"

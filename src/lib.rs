@@ -1,3 +1,4 @@
+extern crate libc;
 extern crate coreaudio_sys;
 pub use coreaudio_sys::core_audio;
 mod error;
@@ -6,10 +7,26 @@ use std::mem;
 
 #[cfg(test)]
 mod tests {
+
     #[test]
     fn it_works() {
         let file = String::from("/Users/paulsandison/paul/dev/rust_projects/coreaudio-rs/test.wav");
-        super::open_audio_file(&file);
+        let result = play_file(&file);
+
+        match result {
+            Ok(_) => {
+                println!("\n\nEverything is ok.");
+            },
+            Err(err) => {
+                panic!("Could not play file, error: {:?}", err);
+            }
+        }
+    }
+
+    fn play_file(file: &String) -> Result<(),super::error::Error> {
+        let audio_file_id = try!( super::open_audio_file(&file) );
+        try!( super::get_data_format(audio_file_id) );
+        Ok(())
     }
 }
 
@@ -35,5 +52,18 @@ pub fn open_audio_file(path: &String) -> Result<core_audio::AudioFileID, Error> 
 
         core_audio::CFRelease(url_ref as core_audio::CFTypeRef);
         Ok(audio_file_id)
+    }
+}
+
+pub fn get_data_format(audio_file_id: core_audio::AudioFileID) -> Result<core_audio::AudioStreamBasicDescription, Error> {
+    unsafe {
+        // get the number of channels of the file
+        let mut file_format : core_audio::AudioStreamBasicDescription = mem::uninitialized();
+        let mut property_size = mem::size_of::<core_audio::AudioStreamBasicDescription>() as u32;
+        try_os_status!(core_audio::AudioFileGetProperty(audio_file_id,
+                                                core_audio::kAudioFilePropertyDataFormat,
+                                                &mut property_size as *mut core_audio::UInt32,
+                                                &mut file_format as *mut _ as *mut libc::c_void));
+        Ok(file_format)
     }
 }
