@@ -1,0 +1,7 @@
+[package]
+name = "playfile"
+version = "0.1.0"
+authors = ["Mousterian <psandison@hotmail.com>"]
+
+[dependencies]
+coreaudio-sys = { git="https://github.com/Mousterian/coreaudio-sys", branch="playfile" }
