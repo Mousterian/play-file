@@ -4,6 +4,7 @@ pub use coreaudio_sys::core_audio;
 mod error;
 use error::Error;
 use std::mem;
+use std::ptr;
 
 #[cfg(test)]
 mod tests {
@@ -30,15 +31,17 @@ mod tests {
         try!( super::get_data_format(audio_file_id) );
         let graph = try!( super::new_au_graph() );
 
-        let _default_output_node = try!(super::add_node(graph, core_audio::kAudioUnitType_Output,
+        let _default_output_node = try!(super::graph_add_node(graph, core_audio::kAudioUnitType_Output,
                                                          core_audio::kAudioUnitSubType_DefaultOutput,
                                                          core_audio::kAudioUnitManufacturer_Apple));
 
-        let _file_node = try!(super::add_node(graph, core_audio::kAudioUnitType_Generator,
+        let file_node = try!(super::graph_add_node(graph, core_audio::kAudioUnitType_Generator,
                                                     core_audio::kAudioUnitSubType_AudioFilePlayer,
                                                     core_audio::kAudioUnitManufacturer_Apple));
 
         try!(super::graph_open(graph));
+
+        try!(super::graph_node_info(graph,file_node));
 
         // TO DO: wrap this in a trait and implement drop for automatic release
         super::drop_au_graph(graph);
@@ -119,7 +122,7 @@ pub fn drop_au_graph(instance : core_audio::AUGraph) {
 }
 
 /// wraps AUGraphAddNode
-pub fn add_node(graph : core_audio::AUGraph, component_type : u32, component_sub_type : u32,
+pub fn graph_add_node(graph : core_audio::AUGraph, component_type : u32, component_sub_type : u32,
                 manufacturer: u32) -> Result<core_audio::AUNode,Error> {
     unsafe {
         let description = core_audio::AudioComponentDescription { 	componentType: component_type,
@@ -142,5 +145,21 @@ pub fn graph_open(graph : core_audio::AUGraph) -> Result<(), Error> {
     unsafe {
         try_os_status!(core_audio::AUGraphOpen(&mut *graph as core_audio::AUGraph));
         Ok(())
+    }
+}
+
+/// wraps AUGraphNodeInfo
+pub fn graph_node_info(graph : core_audio::AUGraph, node : core_audio::AUNode) -> Result<core_audio::AudioUnit, Error> {
+    unsafe {
+        let description: *mut core_audio::AudioComponentDescription = ptr::null_mut();
+        let mut audio_unit : core_audio::AudioUnit = mem::uninitialized();
+        
+        
+        match Error::from_os_status(core_audio::AUGraphNodeInfo(graph, node, description, &mut audio_unit)) {
+            Ok(()) => {
+                Ok(audio_unit)
+            }
+            Err(e) => Err(e)
+        }
     }
 }
