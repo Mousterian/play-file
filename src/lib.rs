@@ -26,6 +26,9 @@ mod tests {
     fn play_file(file: &String) -> Result<(),super::error::Error> {
         let audio_file_id = try!( super::open_audio_file(&file) );
         try!( super::get_data_format(audio_file_id) );
+        let graph = try!( super::new_au_graph() );
+        // TO DO: wrap this in a trait and implement drop for automatic release
+        super::drop_au_graph(graph);
         Ok(())
     }
 }
@@ -65,5 +68,38 @@ pub fn get_data_format(audio_file_id: core_audio::AudioFileID) -> Result<core_au
                                                 &mut property_size as *mut core_audio::UInt32,
                                                 &mut file_format as *mut _ as *mut libc::c_void));
         Ok(file_format)
+    }
+}
+
+pub fn new_au_graph() -> Result<core_audio::AUGraph, Error> {
+    unsafe {
+        let mut graph = mem::uninitialized();
+
+        match Error::from_os_status(core_audio::NewAUGraph (&mut graph as *mut core_audio::AUGraph)) {
+            Ok(()) => {
+                Ok( graph )
+            }
+            Err(err) => {
+                drop_au_graph(graph);
+                Err(err)
+            }
+        }
+    }
+}
+
+pub fn drop_au_graph(instance : core_audio::AUGraph) {
+    unsafe {
+        use error;
+        use std::error::Error;
+
+        if let Err(err) = error::Error::from_os_status(core_audio::AUGraphStop(instance)) {
+            panic!("{:?}", err.description());
+        }
+        if let Err(err) = error::Error::from_os_status(core_audio::AUGraphUninitialize(instance)) {
+            panic!("{:?}", err.description());
+        }
+        if let Err(err) = error::Error::from_os_status(core_audio::AUGraphClose(instance)) {
+            panic!("{:?}", err.description());
+        }
     }
 }
