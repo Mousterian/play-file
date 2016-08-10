@@ -8,6 +8,8 @@ use std::mem;
 #[cfg(test)]
 mod tests {
 
+    use super::core_audio;
+
     #[test]
     fn it_works() {
         let file = String::from("/Users/paulsandison/paul/dev/rust_projects/coreaudio-rs/test.wav");
@@ -27,6 +29,17 @@ mod tests {
         let audio_file_id = try!( super::open_audio_file(&file) );
         try!( super::get_data_format(audio_file_id) );
         let graph = try!( super::new_au_graph() );
+
+        let _default_output_node = try!(super::add_node(graph, core_audio::kAudioUnitType_Output,
+                                                         core_audio::kAudioUnitSubType_DefaultOutput,
+                                                         core_audio::kAudioUnitManufacturer_Apple));
+
+        let _file_node = try!(super::add_node(graph, core_audio::kAudioUnitType_Generator,
+                                                    core_audio::kAudioUnitSubType_AudioFilePlayer,
+                                                    core_audio::kAudioUnitManufacturer_Apple));
+
+        try!(super::graph_open(graph));
+
         // TO DO: wrap this in a trait and implement drop for automatic release
         super::drop_au_graph(graph);
         Ok(())
@@ -80,6 +93,7 @@ pub fn new_au_graph() -> Result<core_audio::AUGraph, Error> {
                 Ok( graph )
             }
             Err(err) => {
+                // TO DO: wrap this in a RAII guard object and move this out of here?
                 drop_au_graph(graph);
                 Err(err)
             }
@@ -101,5 +115,32 @@ pub fn drop_au_graph(instance : core_audio::AUGraph) {
         if let Err(err) = error::Error::from_os_status(core_audio::AUGraphClose(instance)) {
             panic!("{:?}", err.description());
         }
+    }
+}
+
+/// wraps AUGraphAddNode
+pub fn add_node(graph : core_audio::AUGraph, component_type : u32, component_sub_type : u32,
+                manufacturer: u32) -> Result<core_audio::AUNode,Error> {
+    unsafe {
+        let description = core_audio::AudioComponentDescription { 	componentType: component_type,
+                                                            componentSubType: component_sub_type,
+                                                            componentManufacturer: manufacturer,
+                                                            /* TO DO: figure out does anybody actually use these? */
+                                                            componentFlags: 0,
+                                                            componentFlagsMask: 0 };
+        let mut node: core_audio::AUNode = mem::uninitialized();
+        match Error::from_os_status(core_audio::AUGraphAddNode(graph,
+                                    &description as *const core_audio::AudioComponentDescription,
+                                    &mut node as *mut core_audio::AUNode)) {
+            Ok(()) => Ok(node),
+            Err(e) => Err(e)
+        }
+    }
+}
+
+pub fn graph_open(graph : core_audio::AUGraph) -> Result<(), Error> {
+    unsafe {
+        try_os_status!(core_audio::AUGraphOpen(&mut *graph as core_audio::AUGraph));
+        Ok(())
     }
 }
