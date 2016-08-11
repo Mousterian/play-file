@@ -28,7 +28,7 @@ mod tests {
 
     fn play_file(file: &String) -> Result<(),super::error::Error> {
         let audio_file_id = try!( super::open_audio_file(&file) );
-        try!( super::get_data_format(audio_file_id) );
+        let _data_format = try!( super::get_data_format(audio_file_id) );
         let graph = try!( super::new_au_graph() );
 
         let _default_output_node = try!(super::graph_add_node(graph, core_audio::kAudioUnitType_Output,
@@ -41,7 +41,9 @@ mod tests {
 
         try!(super::graph_open(graph));
 
-        try!(super::graph_node_info(graph,file_node));
+        let audio_unit = try!(super::graph_node_info(graph,file_node));
+
+        try!(super::set_number_of_channels(audio_unit, core_audio::kAudioUnitScope_Output, 0/*, data_format.mChannelsPerFrame*/));
 
         // TO DO: wrap this in a trait and implement drop for automatic release
         super::drop_au_graph(graph);
@@ -106,7 +108,6 @@ pub fn new_au_graph() -> Result<core_audio::AUGraph, Error> {
 
 pub fn drop_au_graph(instance : core_audio::AUGraph) {
     unsafe {
-        use error;
         use std::error::Error;
 
         if let Err(err) = error::Error::from_os_status(core_audio::AUGraphStop(instance)) {
@@ -141,6 +142,7 @@ pub fn graph_add_node(graph : core_audio::AUGraph, component_type : u32, compone
     }
 }
 
+/// wraps AUGraphOpen
 pub fn graph_open(graph : core_audio::AUGraph) -> Result<(), Error> {
     unsafe {
         try_os_status!(core_audio::AUGraphOpen(&mut *graph as core_audio::AUGraph));
@@ -158,8 +160,48 @@ pub fn graph_node_info(graph : core_audio::AUGraph, node : core_audio::AUNode) -
         match Error::from_os_status(core_audio::AUGraphNodeInfo(graph, node, description, &mut audio_unit)) {
             Ok(()) => {
                 Ok(audio_unit)
-            }
+            },
             Err(e) => Err(e)
         }
+    }
+}
+
+pub fn set_number_of_channels ( audio_unit : core_audio::AudioUnit,
+                                scope : core_audio::AudioUnitScope,
+                                element : core_audio::AudioUnitElement/*,
+                                number_of_channels: u32 */) -> Result<(), Error> {
+    // set this as the output of the AU
+//    CAStreamBasicDescription desc;
+//    OSStatus result = GetFormat (inScope, inEl, desc);
+    let description: *mut core_audio::AudioStreamBasicDescription = ptr::null_mut();
+    try!(get_format(audio_unit, scope, element, description));
+
+//    if (result) return result;
+//    desc.ChangeNumberChannels (inChans, desc.IsInterleaved());
+//    result = SetFormat (inScope, inEl, desc);
+//    return result;
+    Ok(())
+}
+
+pub fn get_format(  audio_unit : core_audio::AudioUnit,
+                    scope : core_audio::AudioUnitScope,
+                    element : core_audio::AudioUnitElement,
+                    description : *mut core_audio::AudioStreamBasicDescription) -> Result<(()), Error> {
+//    UInt32 dataSize = sizeof (AudioStreamBasicDescription);
+//    return AudioUnitGetProperty (AU(), kAudioUnitProperty_StreamFormat,
+//    inScope, inEl,
+//    &outFormat, &dataSize);
+    unsafe {
+        let mut property_size : u32 = mem::size_of::<core_audio::AudioStreamBasicDescription>() as u32;
+        // it'd be nice to be able to create this here and return it via the Ok() but it seems to
+        // be fighting the borrow checker
+//        let description: *mut core_audio::AudioStreamBasicDescription = ptr::null_mut();
+        try_os_status!(core_audio::AudioUnitGetProperty( audio_unit,
+                                                         core_audio::kAudioUnitProperty_StreamFormat,
+                                                         scope,
+                                                         element,
+                                                         description as *mut libc::c_void,
+                                                         &mut property_size));
+        Ok(())
     }
 }
