@@ -174,16 +174,26 @@ pub fn set_number_of_channels ( audio_unit : core_audio::AudioUnit,
                                 scope : core_audio::AudioUnitScope,
                                 element : core_audio::AudioUnitElement,
                                 number_of_channels: u32 ) -> Result<(), Error> {
-    println!("about to get_format");
-    let original_description = try!(get_format(audio_unit, scope, element));
-    println!("about to change_number_channels");
-    let _updated_description = change_number_channels(&original_description, number_of_channels);
-    println!("done change_number_channels");
-    //    if (result) return result;
-    //    desc.ChangeNumberChannels (inChans, desc.IsInterleaved());
-    //    result = SetFormat (inScope, inEl, desc);
-    //    return result;
-    Ok(())
+    let mut description = try!(get_format(audio_unit, scope, element));
+    change_number_channels(&mut description, number_of_channels);
+    set_format(audio_unit, scope, element, &mut description)
+}
+
+pub fn set_format(audio_unit : core_audio::AudioUnit,
+                  scope : core_audio::AudioUnitScope,
+                  element : core_audio::AudioUnitElement,
+                  description : &core_audio::Struct_AudioStreamBasicDescription) -> Result<(),Error> {
+    unsafe {
+        let mut asbd = description;
+        let mut property_size : u32 = mem::size_of::<core_audio::AudioStreamBasicDescription>() as u32;
+        try_os_status!(core_audio::AudioUnitGetProperty( audio_unit,
+                                                         core_audio::kAudioUnitProperty_StreamFormat,
+                                                         scope,
+                                                         element,
+                                                         &mut asbd as *mut _ as *mut libc::c_void,
+                                                         &mut property_size));
+        Ok(())
+    }
 }
 
 pub fn get_format(  audio_unit : core_audio::AudioUnit,
@@ -211,34 +221,31 @@ pub fn is_pcm(description : &core_audio::AudioStreamBasicDescription) -> bool {
     return description.mFormatID == core_audio::kAudioFormatLinearPCM;
 }
 
-pub fn change_number_channels(original_asbd: &core_audio::AudioStreamBasicDescription,
-                              number_channels : u32) -> core_audio::AudioStreamBasicDescription {
-    println!("in change_number_channels");
-    let mut updated_asbd : core_audio::AudioStreamBasicDescription = *original_asbd;
-    let interleaved = is_interleaved(original_asbd);
-    let mut word_size = sample_word_size(original_asbd);
+pub fn change_number_channels(mut description: &mut core_audio::AudioStreamBasicDescription,
+                              number_channels : u32) {
+    let interleaved = is_interleaved(description);
+    let mut word_size = sample_word_size(description);
     if word_size == 0 {
-        word_size = (original_asbd.mBitsPerChannel + 7) /8;
+        word_size = (description.mBitsPerChannel + 7) /8;
     }
 
-    updated_asbd.mChannelsPerFrame = number_channels;
-    updated_asbd.mFramesPerPacket = 1;
+    description.mChannelsPerFrame = number_channels;
+    description.mFramesPerPacket = 1;
     if interleaved {
-        updated_asbd.mBytesPerFrame = number_channels * word_size;
-        updated_asbd.mBytesPerPacket = updated_asbd.mBytesPerFrame;
+        description.mBytesPerFrame = number_channels * word_size;
+        description.mBytesPerPacket = description.mBytesPerFrame;
         // TO DO: this stinks, must be a better way - macro?
-        let mut temp_format_flags = updated_asbd.mFormatFlags as i32;
+        let mut temp_format_flags = description.mFormatFlags as i32;
         temp_format_flags &= !core_audio::kAudioFormatFlagIsNonInterleaved;
-        updated_asbd.mFormatFlags = temp_format_flags as u32;
+        description.mFormatFlags = temp_format_flags as u32;
     }
     else {
-        updated_asbd.mBytesPerFrame = word_size;
-        updated_asbd.mBytesPerPacket = updated_asbd.mBytesPerFrame;
-        let mut temp_format_flags = updated_asbd.mFormatFlags as i32;
+        description.mBytesPerFrame = word_size;
+        description.mBytesPerPacket = description.mBytesPerFrame;
+        let mut temp_format_flags = description.mFormatFlags as i32;
         temp_format_flags |= core_audio::kAudioFormatFlagIsNonInterleaved;
-        updated_asbd.mFormatFlags = temp_format_flags as u32;
+        description.mFormatFlags = temp_format_flags as u32;
     }
-    updated_asbd
 }
 
 pub fn sample_word_size(description : &core_audio::AudioStreamBasicDescription) -> u32 {
