@@ -184,14 +184,13 @@ pub fn set_format(audio_unit : core_audio::AudioUnit,
                   element : core_audio::AudioUnitElement,
                   description : &core_audio::Struct_AudioStreamBasicDescription) -> Result<(),Error> {
     unsafe {
-        let mut asbd = description;
-        let mut property_size : u32 = mem::size_of::<core_audio::AudioStreamBasicDescription>() as u32;
-        try_os_status!(core_audio::AudioUnitGetProperty( audio_unit,
+        let property_size : u32 = mem::size_of::<core_audio::AudioStreamBasicDescription>() as u32;
+        try_os_status!(core_audio::AudioUnitSetProperty( audio_unit,
                                                          core_audio::kAudioUnitProperty_StreamFormat,
                                                          scope,
                                                          element,
-                                                         &mut asbd as *mut _ as *mut libc::c_void,
-                                                         &mut property_size));
+                                                         description as *const _ as *const libc::c_void,
+                                                         property_size));
         Ok(())
     }
 }
