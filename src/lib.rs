@@ -33,7 +33,7 @@ mod tests {
         let data_format = try!( super::get_data_format(audio_file_id) );
         let graph = try!( super::new_au_graph() );
 
-        let _default_output_node = try!(super::graph_add_node(graph, core_audio::kAudioUnitType_Output,
+        let default_output_node = try!(super::graph_add_node(graph, core_audio::kAudioUnitType_Output,
                                                          core_audio::kAudioUnitSubType_DefaultOutput,
                                                          core_audio::kAudioUnitManufacturer_Apple));
 
@@ -45,9 +45,11 @@ mod tests {
 
         let audio_unit = try!(super::graph_node_info(graph,file_node));
 
-        println!("about to set_number_of_channels");
         try!(super::set_number_of_channels(audio_unit, core_audio::kAudioUnitScope_Output, 0, data_format.mChannelsPerFrame));
-        println!("after to set_number_of_channels");
+
+        try!(super::set_sample_rate(audio_unit, core_audio::kAudioUnitScope_Output, 0, data_format.mSampleRate));
+
+        try!(super::graph_connect_node_input(graph, file_node, 0, default_output_node, 0));
 
         // TO DO: wrap this in a trait and implement drop for automatic release
         super::drop_au_graph(graph);
@@ -170,6 +172,16 @@ pub fn graph_node_info(graph : core_audio::AUGraph, node : core_audio::AUNode) -
     }
 }
 
+pub fn graph_connect_node_input(graph : core_audio::AUGraph, source_node : core_audio::AUNode,
+                                source_output : u32, dest_node : core_audio::AUNode,
+                                dest_output : u32) -> Result<(),Error> {
+    unsafe {
+        try_os_status!(core_audio::AUGraphConnectNodeInput (graph, source_node, source_output, dest_node, dest_output));
+        Ok(())
+    }
+}
+
+
 pub fn set_number_of_channels ( audio_unit : core_audio::AudioUnit,
                                 scope : core_audio::AudioUnitScope,
                                 element : core_audio::AudioUnitElement,
@@ -177,6 +189,44 @@ pub fn set_number_of_channels ( audio_unit : core_audio::AudioUnit,
     let mut description = try!(get_format(audio_unit, scope, element));
     change_number_channels(&mut description, number_of_channels);
     set_format(audio_unit, scope, element, &mut description)
+}
+
+pub fn set_sample_rate (audio_unit : core_audio::AudioUnit,
+                        scope : core_audio::AudioUnitScope,
+                        element : core_audio::AudioUnitElement,
+                        sample_rate : f64) -> Result<(), Error> {
+
+    let mut description = try!(get_format(audio_unit, scope, element));
+    description.mSampleRate = sample_rate;
+    set_format(audio_unit, scope, element, &mut description)
+}
+
+pub fn set_property (audio_unit : core_audio::AudioUnit,
+                     property_id : core_audio::AudioUnitPropertyID,
+                     scope : core_audio::AudioUnitScope,
+                     element : core_audio::AudioUnitElement,
+                     data : *const libc::c_void,
+                     data_size : u32) -> Result<(),Error> {
+    unsafe {
+        try_os_status!(core_audio::AudioUnitSetProperty( audio_unit,
+                                                         property_id,
+                                                         scope,
+                                                         element,
+                                                         data,
+                                                         data_size));
+        Ok(())
+    }
+}
+
+pub fn set_scheduled_file_ids (audio_unit : core_audio::AudioUnit,
+                               scope : core_audio::AudioUnitScope,
+                               element : core_audio::AudioUnitElement,
+                               data : *const libc::c_void) -> Result<(),Error> {
+
+    let property_size : u32 = mem::size_of::<core_audio::AudioStreamBasicDescription>() as u32;
+    try!(set_property(audio_unit, core_audio::kAudioUnitProperty_ScheduledFileIDs,
+                             scope, element, data, property_size));
+    Ok(())
 }
 
 pub fn set_format(audio_unit : core_audio::AudioUnit,
