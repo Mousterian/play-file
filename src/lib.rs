@@ -30,7 +30,7 @@ mod tests {
     fn play_file(file: &String) -> Result<(),super::error::Error> {
         println!("\n\nEverything is ok.");
         let audio_file_id = try!( super::open_audio_file(&file) );
-        let data_format = try!( super::get_data_format(audio_file_id) );
+        let file_format = try!( super::get_data_format(audio_file_id) );
         let graph = try!( super::new_au_graph() );
 
         let default_output_node = try!(super::graph_add_node(graph, core_audio::kAudioUnitType_Output,
@@ -45,11 +45,43 @@ mod tests {
 
         let audio_unit = try!(super::graph_node_info(graph,file_node));
 
-        try!(super::set_number_of_channels(audio_unit, core_audio::kAudioUnitScope_Output, 0, data_format.mChannelsPerFrame));
+        try!(super::set_number_of_channels(audio_unit, core_audio::kAudioUnitScope_Output, 0, file_format.mChannelsPerFrame));
 
-        try!(super::set_sample_rate(audio_unit, core_audio::kAudioUnitScope_Output, 0, data_format.mSampleRate));
+        try!(super::set_sample_rate(audio_unit, core_audio::kAudioUnitScope_Output, 0, file_format.mSampleRate));
+
+        try!(super::set_scheduled_file_ids(audio_unit, core_audio::kAudioUnitScope_Global, 0, audio_file_id));
 
         try!(super::graph_connect_node_input(graph, file_node, 0, default_output_node, 0));
+
+        try!(super::graph_initialize(graph));
+
+        unsafe{
+            // apparently, workaround a race condition in the file player AU
+            super::libc::usleep(10 * 1000);
+        }
+
+        // at this point in the apple c++ sample there is some logic about handling channel order
+        // in surround files, but i'm going to skip over that here for now until we need it.
+
+        // calculate the duration
+        let packet_count = try!(super::audio_file_get_audio_data_packet_count(audio_file_id));
+        println!("Calculated packet_count: {:?}", packet_count);
+
+        let file_duration : f64 = (packet_count * file_format.mFramesPerPacket as u64) as f64 / file_format.mSampleRate;
+        println!("Calculated file_duration: {:?}", file_duration);
+
+        try!(super::audio_unit_set_scheduled_file_region(audio_unit, audio_file_id, packet_count, file_format));
+
+        try!(super::audio_unit_set_scheduled_file_prime(audio_unit, 0));
+
+        try!(super::audio_unit_set_schedule_start_time_stamp(audio_unit,-1.0));
+
+        try!(super::graph_start(graph));
+
+        unsafe{
+            // sleep until the file is finished
+            super::libc::usleep ((file_duration * 1000.0 * 1000.0) as u32);
+        }
 
         // TO DO: wrap this in a trait and implement drop for automatic release
         super::drop_au_graph(graph);
@@ -79,6 +111,17 @@ pub fn open_audio_file(path: &String) -> Result<core_audio::AudioFileID, Error> 
 
         core_audio::CFRelease(url_ref as core_audio::CFTypeRef);
         Ok(audio_file_id)
+    }
+}
+
+pub fn audio_file_get_audio_data_packet_count(audio_file_id : core_audio::AudioFileID) -> Result<u64,Error> {
+    unsafe {
+        let mut packet_count : u64 = 0;
+        let mut property_size = mem::size_of::<u64>() as u32;
+        try_os_status!(core_audio::AudioFileGetProperty(audio_file_id, core_audio::kAudioFilePropertyAudioDataPacketCount,
+                                                        &mut property_size as *mut core_audio::UInt32,
+                                                        &mut packet_count as *mut _ as *mut libc::c_void));
+        Ok(packet_count)
     }
 }
 
@@ -156,6 +199,14 @@ pub fn graph_open(graph : core_audio::AUGraph) -> Result<(), Error> {
     }
 }
 
+pub fn graph_start(graph : core_audio::AUGraph) -> Result<(), Error> {
+    unsafe{
+        // start playing
+        try_os_status!(core_audio::AUGraphStart(graph));
+        Ok(())
+    }
+}
+
 /// wraps AUGraphNodeInfo
 pub fn graph_node_info(graph : core_audio::AUGraph, node : core_audio::AUNode) -> Result<core_audio::AudioUnit, Error> {
     unsafe {
@@ -181,6 +232,12 @@ pub fn graph_connect_node_input(graph : core_audio::AUGraph, source_node : core_
     }
 }
 
+pub fn graph_initialize(graph : core_audio::AUGraph) -> Result<(),Error> {
+    unsafe {
+        try_os_status!(core_audio::AUGraphInitialize (graph));
+        Ok(())
+    }
+}
 
 pub fn set_number_of_channels ( audio_unit : core_audio::AudioUnit,
                                 scope : core_audio::AudioUnitScope,
@@ -201,7 +258,7 @@ pub fn set_sample_rate (audio_unit : core_audio::AudioUnit,
     set_format(audio_unit, scope, element, &mut description)
 }
 
-pub fn set_property (audio_unit : core_audio::AudioUnit,
+pub fn audio_unit_set_property (audio_unit : core_audio::AudioUnit,
                      property_id : core_audio::AudioUnitPropertyID,
                      scope : core_audio::AudioUnitScope,
                      element : core_audio::AudioUnitElement,
@@ -218,14 +275,57 @@ pub fn set_property (audio_unit : core_audio::AudioUnit,
     }
 }
 
+pub fn audio_unit_set_scheduled_file_region(audio_unit : core_audio::AudioUnit,
+                                            audio_file_id : core_audio::AudioFileID,
+                                            packet_count : u64,
+                                            file_format : core_audio::AudioStreamBasicDescription) -> Result<(),Error> {
+
+    let mut region : core_audio::ScheduledAudioFileRegion = core_audio::ScheduledAudioFileRegion::default();
+    // should be memset to 0 by default (see what I did there?)
+    region.mTimeStamp = core_audio::AudioTimeStamp::default();
+    region.mTimeStamp.mFlags = core_audio::kAudioTimeStampSampleTimeValid;
+    region.mTimeStamp.mSampleTime = 0.0;
+    region.mCompletionProc = Option::None;
+    region.mCompletionProcUserData = ptr::null_mut();
+    region.mAudioFile = audio_file_id;
+    region.mLoopCount = 1;
+    region.mStartFrame = 0;
+    let frames_per_packet : u64 = file_format.mFramesPerPacket as u64;
+    region.mFramesToPlay = (packet_count * frames_per_packet) as u32;
+
+    let property_size : u32 = mem::size_of::<core_audio::ScheduledAudioFileRegion>() as u32;
+
+    audio_unit_set_property(audio_unit, core_audio::kAudioUnitProperty_ScheduledFileRegion,
+                            core_audio::kAudioUnitScope_Global, 0,
+                            &region as *const _ as *const libc::c_void, property_size)
+}
+
+pub fn audio_unit_set_scheduled_file_prime(audio_unit : core_audio::AudioUnit, prime_value : u32) -> Result<(),Error> {
+    let property_size : u32 = mem::size_of::<core_audio::UInt32>() as u32;
+    audio_unit_set_property(audio_unit, core_audio::kAudioUnitProperty_ScheduledFilePrime,
+                            core_audio::kAudioUnitScope_Global, 0,
+                            &prime_value as *const _ as *const libc::c_void, property_size)
+}
+
+pub fn audio_unit_set_schedule_start_time_stamp(audio_unit : core_audio::AudioUnit, sample_time : f64) -> Result<(),Error> {
+    // tell the fp AU when to start playing (this ts is in the AU's render time stamps; -1 means next render cycle)
+    let mut start_time: core_audio::AudioTimeStamp = core_audio::AudioTimeStamp::default();
+    start_time.mFlags = core_audio::kAudioTimeStampSampleTimeValid;
+    start_time.mSampleTime = sample_time;
+    let property_size : u32 = mem::size_of::<core_audio::AudioTimeStamp>() as u32;
+    audio_unit_set_property(audio_unit, core_audio::kAudioUnitProperty_ScheduleStartTimeStamp,
+                            core_audio::kAudioUnitScope_Global, 0,
+                            &start_time as *const _ as *const libc::c_void, property_size)
+}
+
 pub fn set_scheduled_file_ids (audio_unit : core_audio::AudioUnit,
                                scope : core_audio::AudioUnitScope,
                                element : core_audio::AudioUnitElement,
-                               data : *const libc::c_void) -> Result<(),Error> {
+                               audio_file_id : core_audio::AudioFileID) -> Result<(),Error> {
 
-    let property_size : u32 = mem::size_of::<core_audio::AudioStreamBasicDescription>() as u32;
-    try!(set_property(audio_unit, core_audio::kAudioUnitProperty_ScheduledFileIDs,
-                             scope, element, data, property_size));
+    let property_size : u32 = mem::size_of::<core_audio::AudioFileID>() as u32;
+    try!(audio_unit_set_property(audio_unit, core_audio::kAudioUnitProperty_ScheduledFileIDs,
+                                scope, element, &audio_file_id as *const _ as *const libc::c_void, property_size));
     Ok(())
 }
 
