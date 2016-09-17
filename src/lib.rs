@@ -176,11 +176,11 @@ pub fn graph_add_node(graph : core_audio::AUGraph, component_type : u32, compone
                 manufacturer: u32) -> Result<core_audio::AUNode,Error> {
     unsafe {
         let description = core_audio::AudioComponentDescription { 	componentType: component_type,
-                                                            componentSubType: component_sub_type,
-                                                            componentManufacturer: manufacturer,
-                                                            /* TO DO: figure out does anybody actually use these? */
-                                                            componentFlags: 0,
-                                                            componentFlagsMask: 0 };
+                                                                    componentSubType: component_sub_type,
+                                                                    componentManufacturer: manufacturer,
+                                                                    /* TO DO: figure out does anybody actually use these? */
+                                                                    componentFlags: 0,
+                                                                    componentFlagsMask: 0 };
         let mut node: core_audio::AUNode = mem::uninitialized();
         match Error::from_os_status(core_audio::AUGraphAddNode(graph,
                                     &description as *const core_audio::AudioComponentDescription,
